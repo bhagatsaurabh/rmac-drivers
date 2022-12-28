@@ -1,6 +1,6 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="Current" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <TestCertificate>rmac-local.pfx</TestCertificate>
+    <TestCertificate>CN="WDKTestCert saura,133162310052646113" | 35EB99A143671C7FC5DE4C42EE66921C401D77C5</TestCertificate>
   </PropertyGroup>
 </Project>
