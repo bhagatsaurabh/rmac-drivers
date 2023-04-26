@@ -14,7 +14,11 @@ These drivers are not tested vigorously like other production drivers out there,
 
 If anything fails while loading the driver due to incompatibility or any other reason, the operating system will not boot ever, even if the system loads up perfectly, and the driver crashes after that, the operating system will crash with it !
 
+If you find yourself in a situation where you cannot boot the OS to remove the driver, Boot to Command Prompt and use [`pnputil`](https://learn.microsoft.com/en-us/windows-hardware/drivers/devtest/pnputil).
+
 <br />
+
+### What are RMAC Drivers ?
 
 RMAC Drivers are a set of Windows Kernel-mode drivers enabling specific features for [RMAC Host-Client](https://github.com/saurabh-prosoft/rmac/tree/main/host-client#rmac-host-client)
 
